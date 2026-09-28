@@ -74,7 +74,8 @@ data class Customer(
     val address: String? = null,
     val totalDue: Double = 0.0,
     val photoUri: String? = null,
-    val initialDetails: String? = null
+    val initialDetails: String? = null,
+    val orderIndex: Int = 0
 ) : Serializable
 
 @Entity(tableName = "dealers")
@@ -86,7 +87,8 @@ data class Dealer(
     val company: String? = null,
     val totalOwed: Double = 0.0,
     val photoUri: String? = null,
-    val initialDetails: String? = null
+    val initialDetails: String? = null,
+    val orderIndex: Int = 0
 ) : Serializable
 
 @Entity(tableName = "transactions")
@@ -108,6 +110,85 @@ data class OwnerInfo(
     val phone: String,
     val email: String
 ) : Serializable
+
+object MasterCustomerRegistry {
+    // 53 customers exactly in the user's master Excel sheet order
+    val masterList = listOf(
+        "মাসুম বাবু" to "01785923475",
+        "ফরহাদ হাসান" to "01785923476",
+        "স্বপন ভাই" to "01749295808",
+        "রুহুল আমিন" to "01719288751",
+        "এফাজ চাচা" to "01721172117",
+        "জামিরুল ভাই" to "01781204787",
+        "শাহজালাল বন্ধু" to "01354842813",
+        "মানিক চা" to "20",
+        "ভিক্ষু ভাগ্নে" to "01319689115",
+        "জাকির ভাই" to "01734366184",
+        "মর্জিনা বেবি" to "01345026184",
+        "জাহিদ বন্ধু হোস্টেল" to "01796803448",
+        "নয়ন ভাই" to "01780871833",
+        "রোকসানা ভাবি" to "01763143597",
+        "সফিকুল ইসলাম" to "01756142983",
+        "পল্টু ভাই" to "01763054818",
+        "সুমন ভাই এফাজর ভাইস্তা" to "01761210179",
+        "জানারুল চাচা" to "01798975717",
+        "হামিদুল" to "01315347207",
+        "বিটুল" to "01961310948",
+        "হারুন মামা" to "01318130912",
+        "হাসান ভাই" to "01753809894",
+        "রাসেল" to "01301584848",
+        "সনি ভাই" to "01738989931",
+        "টিপু বিদেশি" to "01353966553",
+        "ইসলাম মিয়া" to "0172",
+        "জাহিদুল চা" to "30",
+        "আপেল মেকার" to "01742337459",
+        "শাহিন দক্ষিণপাড়া" to "60",
+        "নজুরুল চাচা" to "66",
+        "তোতা মাস্টার" to "90",
+        "শিবলু হোস্টেল" to "33",
+        "টিপু চাচা" to "88",
+        "মোল্লা" to "00",
+        "রফিকুল ভাই (জেটাই)" to "01111",
+        "বাদল কেরানি" to "01725351325",
+        "সাজু বন্ধু" to "01754161186",
+        "মিঠু সরকার" to "01536",
+        "জনি ভাই" to "01704018939",
+        "জিহাদ পাটা" to "01783321692",
+        "শাহিন দিঘাপাড়া গহীন বাধ" to "111111",
+        "শিপলু হোটেল" to "5555",
+        "রুমি আপা" to "1111111",
+        "আশিদুল ভাই" to "6666666",
+        "আব্দুল হাই গোইং" to "55555555",
+        "শফিকুল আর্মি" to "523",
+        "সাইদুল ইসলাম" to "",
+        "আব্দুল্লাহ মায়ের বাকি" to "0253",
+        "সিকান্দার হালেল" to "0624",
+        "হেলাল ডাঃ" to "0178888",
+        "শিপলু মামা" to "09632",
+        "মুঞ্জু ভাই" to "831",
+        "মিল্লাত বাবু" to "01761173255"
+    )
+
+    fun getMasterOrder(name: String, phone: String = ""): Int? {
+        val cleanName = name.trim().lowercase()
+        val cleanPhone = phone.trim().replace("-", "").replace(" ", "")
+        
+        // 1. Try matching exact name
+        val nameIdx = masterList.indexOfFirst { it.first.trim().lowercase() == cleanName }
+        if (nameIdx != -1) return nameIdx + 1
+        
+        // 2. Try matching phone if phone is non-trivial (at least 2 chars)
+        if (cleanPhone.length >= 2) {
+            val phoneIdx = masterList.indexOfFirst {
+                val masterPhone = it.second.trim().replace("-", "").replace(" ", "")
+                masterPhone.isNotEmpty() && (masterPhone == cleanPhone || cleanPhone.startsWith(masterPhone) || masterPhone.startsWith(cleanPhone))
+            }
+            if (phoneIdx != -1) return phoneIdx + 1
+        }
+        
+        return null
+    }
+}
 
 object OwnerParser {
     fun serialize(owners: List<OwnerInfo>): String {

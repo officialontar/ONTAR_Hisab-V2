@@ -43,7 +43,7 @@ fun DealerLedgerScreen(viewModel: AppViewModel) {
     val isBn by viewModel.isBengali.collectAsState()
     val dealersList by viewModel.dealers.collectAsState()
     val sortedDealers = remember(dealersList) {
-        dealersList.sortedBy { it.id }
+        dealersList.sortedWith(compareBy({ it.orderIndex }, { it.id }))
     }
     val colors = MaterialTheme.colorScheme
     val context = LocalContext.current

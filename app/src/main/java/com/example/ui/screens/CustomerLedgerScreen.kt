@@ -45,7 +45,7 @@ fun CustomerLedgerScreen(viewModel: AppViewModel) {
     val isBn by viewModel.isBengali.collectAsState()
     val customersList by viewModel.customers.collectAsState()
     val sortedCustomers = remember(customersList) {
-        customersList.sortedBy { it.id }
+        customersList.sortedWith(compareBy({ it.orderIndex }, { it.id }))
     }
     val currentUser by viewModel.currentUser.collectAsState()
     val colors = MaterialTheme.colorScheme
