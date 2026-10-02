@@ -112,7 +112,7 @@ data class OwnerInfo(
 ) : Serializable
 
 object MasterCustomerRegistry {
-    // 53 customers exactly in the user's master Excel sheet order
+    // 59 customers exactly in the user's master Excel sheet order
     val masterList = listOf(
         "মাসুম বাবু" to "01785923475",
         "ফরহাদ হাসান" to "01785923476",
@@ -164,24 +164,85 @@ object MasterCustomerRegistry {
         "আব্দুল্লাহ মায়ের বাকি" to "0253",
         "সিকান্দার হালেল" to "0624",
         "হেলাল ডাঃ" to "0178888",
-        "শিপলু মামা" to "09632",
+        "শিপু মামা" to "09632",
         "মুঞ্জু ভাই" to "831",
-        "মিল্লাত বাবু" to "01761173255"
+        "মিল্লাত বাবু" to "01761173255",
+        "মিঠু চা" to "0852",
+        "যেটাই ঝলো পাগলী" to "",
+        "ভুট্টা চা" to "",
+        "কলু হাসান" to "",
+        "খায়রুল ভাই কাশের মালা" to "",
+        "বাইদের ব্যাটা মামা" to "",
+        "লতিব  ( কুদ্দুস মেম্বারের ভাই )" to ""
     )
+
+    fun normalizeName(raw: String): String {
+        return raw.trim().lowercase()
+            .replace("\t", " ")
+            .replace("  ", " ")
+            .replace("  ", " ")
+            .replace("(", "").replace(")", "")
+            .replace("-", " ").replace("_", " ")
+            .replace("  ", " ")
+            .trim()
+    }
+
+    fun isSameCustomer(c1Name: String, c1Phone: String, c2Name: String, c2Phone: String): Boolean {
+        val n1 = normalizeName(c1Name)
+        val n2 = normalizeName(c2Name)
+        if (n1.isNotEmpty() && n2.isNotEmpty() && n1 == n2) {
+            return true
+        }
+
+        val cleanP1 = c1Phone.filter { it.isDigit() }
+        val cleanP2 = c2Phone.filter { it.isDigit() }
+        if (cleanP1.length >= 10 && cleanP2.length >= 10) {
+            val phone1 = cleanP1.removePrefix("88")
+            val phone2 = cleanP2.removePrefix("88")
+            if (phone1 == phone2) {
+                return true
+            }
+        }
+        return false
+    }
+
+    fun isSameDealer(d1Name: String, d1Phone: String, d2Name: String, d2Phone: String): Boolean {
+        val n1 = normalizeName(d1Name)
+        val n2 = normalizeName(d2Name)
+        if (n1.isNotEmpty() && n2.isNotEmpty() && n1 == n2) {
+            return true
+        }
+
+        val cleanP1 = d1Phone.filter { it.isDigit() }
+        val cleanP2 = d2Phone.filter { it.isDigit() }
+        if (cleanP1.length >= 10 && cleanP2.length >= 10) {
+            val phone1 = cleanP1.removePrefix("88")
+            val phone2 = cleanP2.removePrefix("88")
+            if (phone1 == phone2) {
+                return true
+            }
+        }
+        return false
+    }
 
     fun getMasterOrder(name: String, phone: String = ""): Int? {
         val cleanName = name.trim().lowercase()
-        val cleanPhone = phone.trim().replace("-", "").replace(" ", "")
+        val normName = normalizeName(name)
+        val cleanPhone = phone.trim().replace("-", "").replace(" ", "").replace(".", "")
         
-        // 1. Try matching exact name
-        val nameIdx = masterList.indexOfFirst { it.first.trim().lowercase() == cleanName }
+        // 1. Try matching exact name or normalized name
+        val nameIdx = masterList.indexOfFirst {
+            val mExact = it.first.trim().lowercase()
+            val mNorm = normalizeName(it.first)
+            mExact == cleanName || mNorm == normName
+        }
         if (nameIdx != -1) return nameIdx + 1
         
-        // 2. Try matching phone if phone is non-trivial (at least 2 chars)
-        if (cleanPhone.length >= 2) {
+        // 2. Try matching phone if phone is non-trivial (at least 6 chars)
+        if (cleanPhone.length >= 6) {
             val phoneIdx = masterList.indexOfFirst {
-                val masterPhone = it.second.trim().replace("-", "").replace(" ", "")
-                masterPhone.isNotEmpty() && (masterPhone == cleanPhone || cleanPhone.startsWith(masterPhone) || masterPhone.startsWith(cleanPhone))
+                val masterPhone = it.second.trim().replace("-", "").replace(" ", "").replace(".", "")
+                masterPhone.length >= 6 && (masterPhone == cleanPhone || cleanPhone.endsWith(masterPhone) || masterPhone.endsWith(cleanPhone))
             }
             if (phoneIdx != -1) return phoneIdx + 1
         }

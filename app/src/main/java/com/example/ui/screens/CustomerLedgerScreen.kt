@@ -1355,7 +1355,9 @@ fun CustomerLedgerScreen(viewModel: AppViewModel) {
                 val customer = selectedCustomerForHistory!!
                 val allTx by viewModel.transactions.collectAsState()
                 val customerTransactions = remember(allTx, customer) {
-                    val filtered = allTx.filter { it.customerId == customer.id }.sortedBy { it.timestamp }
+                    val filtered = allTx.filter { 
+                        it.customerId == customer.id || (it.customerId == null && com.example.data.MasterCustomerRegistry.isSameCustomer(customer.name, customer.phone, it.title, "")) 
+                    }.sortedBy { it.timestamp }
                     
                     var movingDeltaSum = 0.0
                     filtered.forEach { tx ->

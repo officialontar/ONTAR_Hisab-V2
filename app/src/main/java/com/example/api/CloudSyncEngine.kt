@@ -25,7 +25,9 @@ data class SyncPayload(
     val transactions: List<TransactionRecord> = emptyList(),
     val timestamp: Long = System.currentTimeMillis(),
     val registrationTimestamp: Long? = null,
-    val additionalShops: List<User> = emptyList()
+    val additionalShops: List<User> = emptyList(),
+    val deletedCustomerKeys: List<String> = emptyList(),
+    val deletedDealerKeys: List<String> = emptyList()
 )
 
 object CloudSyncEngine {
