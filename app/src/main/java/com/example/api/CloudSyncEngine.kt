@@ -52,9 +52,9 @@ object CloudSyncEngine {
     private val payloadAdapter = moshi.adapter(SyncPayload::class.java)
 
     private val okHttpClient = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(15, TimeUnit.SECONDS)
-        .writeTimeout(15, TimeUnit.SECONDS)
+        .connectTimeout(30, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS)
+        .writeTimeout(30, TimeUnit.SECONDS)
         .retryOnConnectionFailure(true)
         .connectionPool(okhttp3.ConnectionPool(16, 5, TimeUnit.MINUTES))
         .dispatcher(okhttp3.Dispatcher().apply {
@@ -104,7 +104,12 @@ object CloudSyncEngine {
 
     private fun fetchPayloadByUrl(url: String): SyncPayload? {
         return try {
-            val request = Request.Builder().url(url).get().build()
+            val request = Request.Builder()
+                .url(url)
+                .header("Cache-Control", "no-cache")
+                .header("Pragma", "no-cache")
+                .get()
+                .build()
             okHttpClient.newCall(request).execute().use { response ->
                 if (response.isSuccessful) {
                     val rawBody = response.body?.string() ?: return null
@@ -143,7 +148,12 @@ object CloudSyncEngine {
 
     private fun fetchStringByUrl(url: String): String? {
         return try {
-            val request = Request.Builder().url(url).get().build()
+            val request = Request.Builder()
+                .url(url)
+                .header("Cache-Control", "no-cache")
+                .header("Pragma", "no-cache")
+                .get()
+                .build()
             okHttpClient.newCall(request).execute().use { response ->
                 if (response.isSuccessful) {
                     val raw = response.body?.string()?.trim() ?: return null
@@ -173,8 +183,17 @@ object CloudSyncEngine {
         val key = getSanitizedKey(email)
         val url = "${getBaseUrl()}users/$key.json"
 
+        val dedupedTransactions = payload.transactions.distinctBy {
+            "${it.title.trim()}_${it.type}_${it.amount}_${it.timestamp}"
+        }
+        val cleanPayload = if (dedupedTransactions.size != payload.transactions.size) {
+            payload.copy(transactions = dedupedTransactions)
+        } else {
+            payload
+        }
+
         val uploadDirectSuccess = try {
-            val json = payloadAdapter.toJson(payload)
+            val json = payloadAdapter.toJson(cleanPayload)
             val compressedPayload = try {
                 compress(json)
             } catch (e: Exception) {
@@ -193,6 +212,8 @@ object CloudSyncEngine {
             val requestBody = jsonString.toRequestBody("application/json".toMediaType())
             val request = Request.Builder()
                 .url(url)
+                .header("Cache-Control", "no-cache")
+                .header("Pragma", "no-cache")
                 .put(requestBody)
                 .build()
 

@@ -104,6 +104,8 @@ fun CustomerLedgerScreen(viewModel: AppViewModel) {
     var editCustomerPhone by remember { mutableStateOf("") }
     var editCustomerAddress by remember { mutableStateOf("") }
     var editCustomerPhotoUri by remember { mutableStateOf("") }
+    var editCustomerBalance by remember { mutableStateOf("") }
+    var editCustomerBalanceIsDue by remember { mutableStateOf(true) }
 
     // Filter customers dynamically
     val filteredCustomers = remember(sortedCustomers, searchQuery) {
@@ -241,6 +243,11 @@ fun CustomerLedgerScreen(viewModel: AppViewModel) {
     var activeCustomerForSmsDraft by remember { mutableStateOf<Customer?>(null) }
     val draftedMsg by viewModel.draftedDueMsg.collectAsState()
     val isDrafting by viewModel.isMsgDrafting.collectAsState()
+    val isCloudSyncing by viewModel.isCloudSyncing.collectAsState()
+
+    LaunchedEffect(Unit) {
+        viewModel.triggerCloudSync(isManual = false)
+    }
 
     Scaffold(
         topBar = {
@@ -249,6 +256,18 @@ fun CustomerLedgerScreen(viewModel: AppViewModel) {
                 navigationIcon = {
                     IconButton(onClick = { viewModel.navigateTo("DASHBOARD") }) {
                         Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                    }
+                },
+                actions = {
+                    IconButton(
+                        onClick = { viewModel.triggerCloudSync(isManual = true) },
+                        modifier = Modifier.testTag("btn_sync_customer_ledger")
+                    ) {
+                        if (isCloudSyncing) {
+                            CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp, color = colors.primary)
+                        } else {
+                            Icon(Icons.Default.Refresh, contentDescription = "Sync Cloud", tint = colors.primary)
+                        }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = colors.surface)
@@ -598,6 +617,8 @@ fun CustomerLedgerScreen(viewModel: AppViewModel) {
                                         editCustomerPhone = customer.phone
                                         editCustomerAddress = customer.address ?: ""
                                         editCustomerPhotoUri = customer.photoUri ?: ""
+                                        editCustomerBalanceIsDue = customer.totalDue >= 0
+                                        editCustomerBalance = if (customer.totalDue == 0.0) "" else String.format(java.util.Locale.US, "%.2f", java.lang.Math.abs(customer.totalDue))
                                     },
                                     onDeleteClick = {
                                         customerToDelete = customer
@@ -1039,6 +1060,58 @@ fun CustomerLedgerScreen(viewModel: AppViewModel) {
                                     .testTag("edit_customer_address")
                             )
 
+                            Spacer(modifier = Modifier.height(6.dp))
+
+                            // Direct Balance Adjustment Card
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp),
+                                colors = CardDefaults.cardColors(containerColor = colors.primary.copy(alpha = 0.05f)),
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Column(modifier = Modifier.padding(10.dp)) {
+                                    Text(
+                                        text = if (isBn) "বকেয়া বা জমা ব্যালেন্স সরাসরি পরিবর্তন" else "Direct Balance Adjustment",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = colors.primary
+                                    )
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        FilterChip(
+                                            selected = editCustomerBalanceIsDue,
+                                            onClick = { editCustomerBalanceIsDue = true },
+                                            label = { Text(if (isBn) "বাকি (Due)" else "Due") },
+                                            leadingIcon = if (editCustomerBalanceIsDue) { { Icon(Icons.Default.Check, null, modifier = Modifier.size(14.dp)) } } else null,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        FilterChip(
+                                            selected = !editCustomerBalanceIsDue,
+                                            onClick = { editCustomerBalanceIsDue = false },
+                                            label = { Text(if (isBn) "জমা (Advance)" else "Advance") },
+                                            leadingIcon = if (!editCustomerBalanceIsDue) { { Icon(Icons.Default.Check, null, modifier = Modifier.size(14.dp)) } } else null,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    OutlinedTextField(
+                                        value = editCustomerBalance,
+                                        onValueChange = { editCustomerBalance = it },
+                                        label = { Text(if (editCustomerBalanceIsDue) (if (isBn) "মোট বকেয়া বাকি (৳)" else "Total Due (৳)") else (if (isBn) "মোট অগ্রিম জমা (৳)" else "Total Advance Deposit (৳)")) },
+                                        placeholder = { Text(if (isBn) "০.০০" else "0.00") },
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                        singleLine = true,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .testTag("edit_customer_balance")
+                                    )
+                                }
+                            }
+
                             Spacer(modifier = Modifier.height(10.dp))
 
                             Column(
@@ -1238,12 +1311,19 @@ fun CustomerLedgerScreen(viewModel: AppViewModel) {
                             onClick = {
                                 val current = customerToEdit
                                 if (current != null && editCustomerName.isNotBlank()) {
+                                    val parsedBal = viewModel.parseDoubleRobust(editCustomerBalance)
+                                    val targetDue = if (editCustomerBalance.isNotBlank()) {
+                                        if (editCustomerBalanceIsDue) parsedBal else -parsedBal
+                                    } else {
+                                        current.totalDue
+                                    }
                                     viewModel.updateCustomerProfile(
                                         customer = current,
                                         name = editCustomerName.trim(),
                                         phone = editCustomerPhone.trim(),
                                         address = editCustomerAddress.trim(),
-                                        photoUri = if (editCustomerPhotoUri.isBlank()) null else editCustomerPhotoUri
+                                        photoUri = if (editCustomerPhotoUri.isBlank()) null else editCustomerPhotoUri,
+                                        newTotalDue = targetDue
                                     )
                                     customerToEdit = null
                                 } else {
@@ -1354,9 +1434,28 @@ fun CustomerLedgerScreen(viewModel: AppViewModel) {
             if (selectedCustomerForHistory != null) {
                 val customer = selectedCustomerForHistory!!
                 val allTx by viewModel.transactions.collectAsState()
-                val customerTransactions = remember(allTx, customer) {
-                    val filtered = allTx.filter { 
-                        it.customerId == customer.id || (it.customerId == null && com.example.data.MasterCustomerRegistry.isSameCustomer(customer.name, customer.phone, it.title, "")) 
+                val customerTransactions = remember(allTx, customer, sortedCustomers) {
+                    val filtered = allTx.filter { tx ->
+                        if (tx.customerId != null) {
+                            tx.customerId == customer.id
+                        } else {
+                            val cleanTitle = tx.title.trim()
+                            val parsedName = when {
+                                cleanTitle.contains("-এর বাকি হিসাব বাড়েছে") -> cleanTitle.substringBefore("-এর বাকি হিসাব বাড়েছে").trim()
+                                cleanTitle.contains(" বাকি জমা দিয়েছে") -> cleanTitle.substringBefore(" বাকি জমা দিয়েছে").trim()
+                                cleanTitle.contains("-এর বকেয়া হিসাব সমন্বয়") -> cleanTitle.substringBefore("-এর বকেয়া হিসাব সমন্বয়").trim()
+                                cleanTitle.contains("Due increased for ") -> cleanTitle.substringAfter("Due increased for ").trim()
+                                cleanTitle.contains("Received payment from ") -> cleanTitle.substringAfter("Received payment from ").trim()
+                                cleanTitle.contains("Balance adjusted for ") -> cleanTitle.substringAfter("Balance adjusted for ").trim()
+                                else -> null
+                            }
+                            if (!parsedName.isNullOrBlank()) {
+                                com.example.data.MasterCustomerRegistry.isSameCustomer(customer.name, customer.phone, parsedName, "") ||
+                                customer.name.trim().equals(parsedName, ignoreCase = true)
+                            } else {
+                                false
+                            }
+                        }
                     }.sortedBy { it.timestamp }
                     
                     var movingDeltaSum = 0.0

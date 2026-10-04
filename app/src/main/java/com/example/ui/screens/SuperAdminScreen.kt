@@ -63,6 +63,10 @@ fun SuperAdminScreen(viewModel: AppViewModel) {
     var customerDuesMap by remember { mutableStateOf<Map<String, Double>>(emptyMap()) }
     var dealerDuesMap by remember { mutableStateOf<Map<String, Double>>(emptyMap()) }
     var customerDuesCountMap by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
+    var allPayloadsMap by remember { mutableStateOf<Map<String, com.example.api.SyncPayload>>(emptyMap()) }
+    var userForDetailsView by remember { mutableStateOf<User?>(null) }
+    var detailsTab by remember { mutableStateOf(0) }
+    var detailsSearch by remember { mutableStateOf("") }
 
     // Dialog state variables for Admin functions
     var showEditDialog by remember { mutableStateOf(false) }
@@ -300,6 +304,7 @@ fun SuperAdminScreen(viewModel: AppViewModel) {
                 totalCustomersCount = tempCust
                 totalTransactionsCount = tempTx
                 
+                allPayloadsMap = payloadsMap
                 activeUsersCount = actUsers
                 inactiveUsersCount = inactUsers
                 activeDevicesCount = actDevices
@@ -320,7 +325,7 @@ fun SuperAdminScreen(viewModel: AppViewModel) {
         while (true) {
             refreshData(showLoading = isFirst)
             isFirst = false
-            kotlinx.coroutines.delay(6000)
+            kotlinx.coroutines.delay(12000)
         }
     }
 
@@ -582,6 +587,126 @@ fun SuperAdminScreen(viewModel: AppViewModel) {
                                             fontSize = 13.sp,
                                             fontWeight = FontWeight.Bold,
                                             color = colors.error
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // Real-Time Total Financial Dues Overview across all shops
+                    val totalAllCustDues = customerDuesMap.values.filter { it > 0 }.sum()
+                    val totalAllDealerDues = dealerDuesMap.values.filter { it > 0 }.sum()
+                    val totalAllDueCustomers = customerDuesCountMap.values.sum()
+
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = colors.surfaceColorAtElevation(2.dp)),
+                        shape = RoundedCornerShape(14.dp),
+                        border = BorderStroke(1.dp, colors.primary.copy(alpha = 0.2f))
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(8.dp)
+                                            .clip(CircleShape)
+                                            .background(Color(0xFF4CAF50))
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = if (isBn) "লাইভ আর্থিক হিসাব ও বকেয়া পর্যালোচনা" else "Live Real-Time Balances Overview",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        color = colors.primary
+                                    )
+                                }
+                                Text(
+                                    text = if (isBn) "সব শপ মিলিয়ে" else "All Shops Combined",
+                                    fontSize = 10.sp,
+                                    color = colors.onSurfaceVariant.copy(alpha = 0.7f),
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                // 1. Total Customer Dues
+                                Card(
+                                    modifier = Modifier.weight(1.2f),
+                                    colors = CardDefaults.cardColors(containerColor = Color(0xFFFFEBEE)),
+                                    shape = RoundedCornerShape(10.dp)
+                                ) {
+                                    Column(modifier = Modifier.padding(8.dp)) {
+                                        Text(
+                                            text = if (isBn) "মোট কাস্টমার বাকি" else "Total Cust Dues",
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = Color(0xFFC62828)
+                                        )
+                                        Spacer(modifier = Modifier.height(2.dp))
+                                        Text(
+                                            text = "৳ ${String.format(java.util.Locale.US, "%,.1f", totalAllCustDues)}",
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Black,
+                                            color = Color(0xFFC62828)
+                                        )
+                                    }
+                                }
+
+                                // 2. Total Dealer Debt
+                                Card(
+                                    modifier = Modifier.weight(1.2f),
+                                    colors = CardDefaults.cardColors(containerColor = Color(0xFFE3F2FD)),
+                                    shape = RoundedCornerShape(10.dp)
+                                ) {
+                                    Column(modifier = Modifier.padding(8.dp)) {
+                                        Text(
+                                            text = if (isBn) "মোট ডিলার দেনা" else "Total Dealer Owed",
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = Color(0xFF1565C0)
+                                        )
+                                        Spacer(modifier = Modifier.height(2.dp))
+                                        Text(
+                                            text = "৳ ${String.format(java.util.Locale.US, "%,.1f", totalAllDealerDues)}",
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Black,
+                                            color = Color(0xFF1565C0)
+                                        )
+                                    }
+                                }
+
+                                // 3. Total Due Customers Count
+                                Card(
+                                    modifier = Modifier.weight(0.9f),
+                                    colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF3E0)),
+                                    shape = RoundedCornerShape(10.dp)
+                                ) {
+                                    Column(modifier = Modifier.padding(8.dp)) {
+                                        Text(
+                                            text = if (isBn) "বাকি খরিদ্দার" else "Due Custs",
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = Color(0xFFE65100)
+                                        )
+                                        Spacer(modifier = Modifier.height(2.dp))
+                                        Text(
+                                            text = if (isBn) "$totalAllDueCustomers জন" else "$totalAllDueCustomers",
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Black,
+                                            color = Color(0xFFE65100)
                                         )
                                     }
                                 }
@@ -1241,6 +1366,11 @@ fun SuperAdminScreen(viewModel: AppViewModel) {
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .padding(horizontal = 4.dp, vertical = 4.dp)
+                                        .clickable {
+                                            detailsTab = 0
+                                            detailsSearch = ""
+                                            userForDetailsView = user
+                                        }
                                 ) {
                                     Row(
                                         modifier = Modifier
@@ -1369,6 +1499,34 @@ fun SuperAdminScreen(viewModel: AppViewModel) {
                                         }
                                     }
                                  }
+
+                                OutlinedButton(
+                                    onClick = {
+                                        detailsTab = 0
+                                        detailsSearch = ""
+                                        userForDetailsView = user
+                                    },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 4.dp, vertical = 2.dp),
+                                    shape = RoundedCornerShape(8.dp),
+                                    colors = ButtonDefaults.outlinedButtonColors(
+                                        contentColor = colors.primary
+                                    ),
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.List,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = if (isBn) "📋 সকল বাকি ও পাওনার তালিকা দেখুন" else "📋 View Detailed Ledger List",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
 
                                 Spacer(modifier = Modifier.height(12.dp))
                                 Divider(color = colors.outlineVariant, thickness = 0.5.dp)
@@ -2480,6 +2638,340 @@ fun SuperAdminScreen(viewModel: AppViewModel) {
                 }
             )
         }
+    }
+
+    // Comprehensive Real-Time Customer & Dealer Ledger Details Dialog for Admin
+    if (userForDetailsView != null) {
+        val targetUser = userForDetailsView!!
+        val isTargetSelf = targetUser.email.trim().lowercase() == (viewModel.currentUser.value?.email?.trim()?.lowercase() ?: "")
+        val selfCustomers by viewModel.customers.collectAsState()
+        val selfDealers by viewModel.dealers.collectAsState()
+        val selfStock by viewModel.stockItems.collectAsState()
+        val targetPayload = allPayloadsMap[targetUser.email.trim().lowercase()]
+
+        val allCustomersList = if (isTargetSelf) selfCustomers else (targetPayload?.customers ?: emptyList())
+        val allDealersList = if (isTargetSelf) selfDealers else (targetPayload?.dealers ?: emptyList())
+        val allStockList = if (isTargetSelf) selfStock else (targetPayload?.stockItems ?: emptyList())
+
+        val filteredCustList = remember(allCustomersList, detailsSearch) {
+            if (detailsSearch.isBlank()) allCustomersList
+            else allCustomersList.filter {
+                it.name.contains(detailsSearch, ignoreCase = true) || it.phone.contains(detailsSearch)
+            }
+        }
+
+        val filteredDealerList = remember(allDealersList, detailsSearch) {
+            if (detailsSearch.isBlank()) allDealersList
+            else allDealersList.filter {
+                it.name.contains(detailsSearch, ignoreCase = true) || it.phone.contains(detailsSearch) || (it.company?.contains(detailsSearch, ignoreCase = true) == true)
+            }
+        }
+
+        val filteredStockList = remember(allStockList, detailsSearch) {
+            if (detailsSearch.isBlank()) allStockList
+            else allStockList.filter {
+                it.name.contains(detailsSearch, ignoreCase = true) || it.category.contains(detailsSearch, ignoreCase = true)
+            }
+        }
+
+        val totalCustDue = allCustomersList.filter { it.totalDue > 0 }.sumOf { it.totalDue }
+        val totalCustAdvance = allCustomersList.filter { it.totalDue < 0 }.sumOf { java.lang.Math.abs(it.totalDue) }
+        val totalDealerOwed = allDealersList.filter { it.totalOwed > 0 }.sumOf { it.totalOwed }
+        val totalStockValue = allStockList.sumOf { it.stockCount * it.salesPrice }
+
+        AlertDialog(
+            onDismissRequest = { userForDetailsView = null },
+            title = {
+                Column {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = targetUser.getLocalizedShopName(isBn).ifBlank { if (isBn) "দোকানের বিবরণী" else "Shop Details" },
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 16.sp,
+                            color = colors.primary,
+                            modifier = Modifier.weight(1f)
+                        )
+                        IconButton(onClick = { userForDetailsView = null }) {
+                            Icon(Icons.Default.Close, contentDescription = "Close")
+                        }
+                    }
+                    Text(
+                        text = if (isBn) "মালিক: ${targetUser.getLocalizedOwnerName(isBn)} | ফোন: ${targetUser.phone}" else "Owner: ${targetUser.ownerName} | ${targetUser.phone}",
+                        fontSize = 11.sp,
+                        color = colors.onSurfaceVariant
+                    )
+                }
+            },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 500.dp)
+                ) {
+                    TabRow(
+                        selectedTabIndex = detailsTab,
+                        containerColor = colors.surfaceVariant.copy(alpha = 0.4f),
+                        contentColor = colors.primary
+                    ) {
+                        Tab(
+                            selected = detailsTab == 0,
+                            onClick = { detailsTab = 0; detailsSearch = "" },
+                            text = {
+                                Text(
+                                    text = if (isBn) "গ্রাহক বাকি (${allCustomersList.size})" else "Customers (${allCustomersList.size})",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        )
+                        Tab(
+                            selected = detailsTab == 1,
+                            onClick = { detailsTab = 1; detailsSearch = "" },
+                            text = {
+                                Text(
+                                    text = if (isBn) "ডিলার পাওনা (${allDealersList.size})" else "Dealers (${allDealersList.size})",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        )
+                        Tab(
+                            selected = detailsTab == 2,
+                            onClick = { detailsTab = 2; detailsSearch = "" },
+                            text = {
+                                Text(
+                                    text = if (isBn) "স্টক (${allStockList.size})" else "Stock (${allStockList.size})",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    OutlinedTextField(
+                        value = detailsSearch,
+                        onValueChange = { detailsSearch = it },
+                        placeholder = {
+                            Text(
+                                if (isBn) "খুঁজুন (নাম বা ফোন)..." else "Search name or phone...",
+                                fontSize = 12.sp
+                            )
+                        },
+                        leadingIcon = {
+                            Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(16.dp))
+                        },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth().height(50.dp)
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    when (detailsTab) {
+                        0 -> {
+                            // Customer Tab
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Card(
+                                    modifier = Modifier.weight(1f),
+                                    colors = CardDefaults.cardColors(containerColor = Color(0xFFFFEBEE))
+                                ) {
+                                    Column(modifier = Modifier.padding(6.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Text(if (isBn) "মোট বাকি" else "Total Due", fontSize = 10.sp, color = Color(0xFFC62828), fontWeight = FontWeight.Bold)
+                                        Text("৳ ${String.format("%.2f", totalCustDue)}", fontSize = 12.sp, color = Color(0xFFC62828), fontWeight = FontWeight.ExtraBold)
+                                    }
+                                }
+                                Card(
+                                    modifier = Modifier.weight(1f),
+                                    colors = CardDefaults.cardColors(containerColor = Color(0xFFE8F5E9))
+                                ) {
+                                    Column(modifier = Modifier.padding(6.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Text(if (isBn) "মোট অগ্রিম জমা" else "Total Advance", fontSize = 10.sp, color = Color(0xFF2E7D32), fontWeight = FontWeight.Bold)
+                                        Text("৳ ${String.format("%.2f", totalCustAdvance)}", fontSize = 12.sp, color = Color(0xFF2E7D32), fontWeight = FontWeight.ExtraBold)
+                                    }
+                                }
+                            }
+
+                            if (filteredCustList.isEmpty()) {
+                                Box(modifier = Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
+                                    Text(if (isBn) "কোনো কাস্টমার হিসাব পাওয়া যায়নি" else "No customer accounts found", color = colors.onSurfaceVariant)
+                                }
+                            } else {
+                                LazyColumn(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    items(filteredCustList) { c ->
+                                        Card(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            colors = CardDefaults.cardColors(containerColor = colors.surface),
+                                            border = BorderStroke(0.5.dp, colors.outlineVariant)
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth().padding(10.dp),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Column(modifier = Modifier.weight(1f)) {
+                                                    Text(c.name, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                                    if (c.phone.isNotBlank()) {
+                                                        Text(c.phone, fontSize = 11.sp, color = colors.onSurfaceVariant)
+                                                    }
+                                                    if (!c.address.isNullOrBlank()) {
+                                                        Text("📍 ${c.address}", fontSize = 10.sp, color = colors.onSurfaceVariant.copy(alpha = 0.8f))
+                                                    }
+                                                }
+                                                val isDeposit = c.totalDue < 0
+                                                Column(horizontalAlignment = Alignment.End) {
+                                                    Text(
+                                                        text = if (isDeposit) (if (isBn) "জমা" else "Deposit") else (if (isBn) "বাকি" else "Due"),
+                                                        fontSize = 10.sp,
+                                                        color = if (isDeposit) Color(0xFF2E7D32) else Color(0xFFC62828),
+                                                        fontWeight = FontWeight.Bold
+                                                    )
+                                                    Text(
+                                                        text = "৳ ${String.format("%.2f", java.lang.Math.abs(c.totalDue))}",
+                                                        fontWeight = FontWeight.ExtraBold,
+                                                        fontSize = 13.sp,
+                                                        color = if (isDeposit) Color(0xFF2E7D32) else Color(0xFFC62828)
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        1 -> {
+                            // Dealer Tab
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp),
+                                colors = CardDefaults.cardColors(containerColor = Color(0xFFE3F2FD))
+                            ) {
+                                Column(modifier = Modifier.padding(6.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Text(if (isBn) "ডিলারের মোট পাওনা" else "Total Dealer Owed", fontSize = 10.sp, color = Color(0xFF1565C0), fontWeight = FontWeight.Bold)
+                                    Text("৳ ${String.format("%.2f", totalDealerOwed)}", fontSize = 13.sp, color = Color(0xFF1565C0), fontWeight = FontWeight.ExtraBold)
+                                }
+                            }
+
+                            if (filteredDealerList.isEmpty()) {
+                                Box(modifier = Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
+                                    Text(if (isBn) "কোনো ডিলার হিসাব পাওয়া যায়নি" else "No supplier/dealer accounts found", color = colors.onSurfaceVariant)
+                                }
+                            } else {
+                                LazyColumn(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    items(filteredDealerList) { d ->
+                                        Card(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            colors = CardDefaults.cardColors(containerColor = colors.surface),
+                                            border = BorderStroke(0.5.dp, colors.outlineVariant)
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth().padding(10.dp),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Column(modifier = Modifier.weight(1f)) {
+                                                    Text(d.company ?: d.name, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                                    if (d.name != d.company && d.name.isNotBlank()) {
+                                                        Text("যোগাযোগ: ${d.name}", fontSize = 11.sp, color = colors.onSurfaceVariant)
+                                                    }
+                                                    if (d.phone.isNotBlank()) {
+                                                        Text("ফোন: ${d.phone}", fontSize = 10.sp, color = colors.onSurfaceVariant)
+                                                    }
+                                                }
+                                                Column(horizontalAlignment = Alignment.End) {
+                                                    Text(if (isBn) "পাওনা" else "Owed", fontSize = 10.sp, color = Color(0xFF1565C0), fontWeight = FontWeight.Bold)
+                                                    Text(
+                                                        "৳ ${String.format("%.2f", d.totalOwed)}",
+                                                        fontWeight = FontWeight.ExtraBold,
+                                                        fontSize = 13.sp,
+                                                        color = Color(0xFF1565C0)
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        2 -> {
+                            // Stock Tab
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp),
+                                colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF3E0))
+                            ) {
+                                Column(modifier = Modifier.padding(6.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Text(if (isBn) "মোট মজুদ পণ্য মূল্য" else "Total Inventory Value", fontSize = 10.sp, color = Color(0xFFE65100), fontWeight = FontWeight.Bold)
+                                    Text("৳ ${String.format("%.2f", totalStockValue)}", fontSize = 13.sp, color = Color(0xFFE65100), fontWeight = FontWeight.ExtraBold)
+                                }
+                            }
+
+                            if (filteredStockList.isEmpty()) {
+                                Box(modifier = Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
+                                    Text(if (isBn) "কোনো স্টক পণ্য পাওয়া যায়নি" else "No stock items found", color = colors.onSurfaceVariant)
+                                }
+                            } else {
+                                LazyColumn(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    items(filteredStockList) { s ->
+                                        Card(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            colors = CardDefaults.cardColors(containerColor = colors.surface),
+                                            border = BorderStroke(0.5.dp, colors.outlineVariant)
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth().padding(10.dp),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Column(modifier = Modifier.weight(1f)) {
+                                                    Text(s.name, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                                    Text("${if (isBn) "ক্যাটাগরি" else "Category"}: ${s.category}", fontSize = 11.sp, color = colors.onSurfaceVariant)
+                                                    Text("ক্রয়: ৳${s.purchasePrice} | বিক্রয়: ৳${s.salesPrice}", fontSize = 10.sp, color = colors.onSurfaceVariant)
+                                                }
+                                                Column(horizontalAlignment = Alignment.End) {
+                                                    Text(if (isBn) "মজুদ" else "In Stock", fontSize = 10.sp, color = colors.primary, fontWeight = FontWeight.Bold)
+                                                    Text(
+                                                        "${s.stockCount} ${s.unit ?: ""}".trim(),
+                                                        fontWeight = FontWeight.ExtraBold,
+                                                        fontSize = 13.sp,
+                                                        color = colors.primary
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(onClick = { userForDetailsView = null }) {
+                    Text(if (isBn) "ঠিক আছে" else "OK")
+                }
+            }
+        )
     }
 }
 }

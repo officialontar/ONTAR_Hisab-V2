@@ -73,6 +73,8 @@ fun DealerLedgerScreen(viewModel: AppViewModel) {
     var editDealerPhone by remember { mutableStateOf("") }
     var editCompanyName by remember { mutableStateOf("") }
     var editDealerPhotoUri by remember { mutableStateOf("") }
+    var editDealerBalance by remember { mutableStateOf("") }
+    var editDealerBalanceIsDebt by remember { mutableStateOf(true) }
 
     // Filter dealers dynamically
     val filteredDealers = remember(sortedDealers, searchQuery) {
@@ -489,6 +491,8 @@ fun DealerLedgerScreen(viewModel: AppViewModel) {
                                         editDealerPhone = dealer.phone
                                         editCompanyName = dealer.company ?: ""
                                         editDealerPhotoUri = dealer.photoUri ?: ""
+                                        editDealerBalanceIsDebt = dealer.totalOwed >= 0
+                                        editDealerBalance = if (dealer.totalOwed == 0.0) "" else String.format(java.util.Locale.US, "%.2f", java.lang.Math.abs(dealer.totalOwed))
                                     },
                                     onDeleteClick = {
                                         dealerToDelete = dealer
@@ -924,6 +928,58 @@ fun DealerLedgerScreen(viewModel: AppViewModel) {
                                     .testTag("edit_dealer_company")
                             )
 
+                            Spacer(modifier = Modifier.height(6.dp))
+
+                            // Direct Debt Adjustment Card
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp),
+                                colors = CardDefaults.cardColors(containerColor = colors.primary.copy(alpha = 0.05f)),
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Column(modifier = Modifier.padding(10.dp)) {
+                                    Text(
+                                        text = if (isBn) "পাওনা বা দেনা ব্যালেন্স সরাসরি পরিবর্তন" else "Direct Debt / Advance Adjustment",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = colors.primary
+                                    )
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        FilterChip(
+                                            selected = editDealerBalanceIsDebt,
+                                            onClick = { editDealerBalanceIsDebt = true },
+                                            label = { Text(if (isBn) "ডিলারের পাওনা" else "Debt") },
+                                            leadingIcon = if (editDealerBalanceIsDebt) { { Icon(Icons.Default.Check, null, modifier = Modifier.size(14.dp)) } } else null,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        FilterChip(
+                                            selected = !editDealerBalanceIsDebt,
+                                            onClick = { editDealerBalanceIsDebt = false },
+                                            label = { Text(if (isBn) "অগ্রিম পরিশোধ" else "Advance") },
+                                            leadingIcon = if (!editDealerBalanceIsDebt) { { Icon(Icons.Default.Check, null, modifier = Modifier.size(14.dp)) } } else null,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    OutlinedTextField(
+                                        value = editDealerBalance,
+                                        onValueChange = { editDealerBalance = it },
+                                        label = { Text(if (editDealerBalanceIsDebt) (if (isBn) "মোট পাওনা টাকা (৳)" else "Total Debt (৳)") else (if (isBn) "মোট অগ্রিম টাকা (৳)" else "Total Advance (৳)")) },
+                                        placeholder = { Text(if (isBn) "০.০০" else "0.00") },
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                        singleLine = true,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .testTag("edit_dealer_balance")
+                                    )
+                                }
+                            }
+
                             Spacer(modifier = Modifier.height(10.dp))
 
                             Column(
@@ -1122,12 +1178,19 @@ fun DealerLedgerScreen(viewModel: AppViewModel) {
                             onClick = {
                                 val current = dealerToEdit
                                 if (current != null && editDealerName.isNotBlank()) {
+                                    val parsedBal = viewModel.parseDoubleRobust(editDealerBalance)
+                                    val targetOwed = if (editDealerBalance.isNotBlank()) {
+                                        if (editDealerBalanceIsDebt) parsedBal else -parsedBal
+                                    } else {
+                                        current.totalOwed
+                                    }
                                     viewModel.updateDealerProfile(
                                         dealer = current,
                                         name = editDealerName.trim(),
                                         phone = editDealerPhone.trim(),
                                         company = editCompanyName.trim(),
-                                        photoUri = if (editDealerPhotoUri.isBlank()) null else editDealerPhotoUri
+                                        photoUri = if (editDealerPhotoUri.isBlank()) null else editDealerPhotoUri,
+                                        newTotalOwed = targetOwed
                                     )
                                     dealerToEdit = null
                                 } else {
