@@ -129,15 +129,15 @@ fun MainDashboard(viewModel: AppViewModel) {
     // Financial Metrics Flows
     LaunchedEffect(showProfileSettingsDialog) {
         if (showProfileSettingsDialog && user != null) {
-            editShopName = user?.getLocalizedShopName(isBn) ?: ""
-            editOwnerName = user?.getLocalizedOwnerName(isBn) ?: ""
+            editShopName = user?.shopName ?: ""
+            editOwnerName = user?.ownerName ?: ""
             editPhone = user?.phone ?: ""
             editEmail = user?.email ?: ""
             editPin = user?.passwordHash ?: ""
             editShopPicture = user?.shopPicture ?: ""
             editOwnerPicture = user?.profilePicture ?: ""
             
-            val currentOwners = com.example.data.OwnerParser.deserialize(user?.getLocalizedOwnerName(isBn), user?.phone ?: "", user?.email ?: "")
+            val currentOwners = com.example.data.OwnerParser.deserialize(user?.ownerName, user?.phone ?: "", user?.email ?: "")
             editOwnershipType = if (user?.ownerName?.trim()?.startsWith("[") == true) "joint" else "single"
             editJointCount = if (currentOwners.size >= 3) 3 else 2
             

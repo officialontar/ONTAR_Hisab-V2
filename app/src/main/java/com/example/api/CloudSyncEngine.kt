@@ -63,7 +63,7 @@ object CloudSyncEngine {
         })
         .build()
 
-    private fun getSanitizedKey(email: String): String {
+    fun getSanitizedKey(email: String): String {
         return "user_" + email.lowercase()
             .trim()
             .replace("@", "_at_")

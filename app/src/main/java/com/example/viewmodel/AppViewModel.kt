@@ -601,6 +601,11 @@ class AppViewModel(val repository: AppRepository, private val application: andro
         val cleanPhone = phone.trim().replace("-", "").replace(" ", "").replace(".", "")
         if (deletedKeys.contains(cleanName) || (normName.isNotEmpty() && deletedKeys.contains(normName))) return true
         if (cleanPhone.length >= 6 && deletedKeys.contains(cleanPhone)) return true
+        for (k in deletedKeys) {
+            if (k.length >= 2 && (cleanName.contains(k) || (normName.isNotEmpty() && normName.contains(k)))) {
+                return true
+            }
+        }
         return false
     }
 
@@ -612,7 +617,25 @@ class AppViewModel(val repository: AppRepository, private val application: andro
         val cleanPhone = phone.trim().replace("-", "").replace(" ", "").replace(".", "")
         if (deletedKeys.contains(cleanName) || (normName.isNotEmpty() && deletedKeys.contains(normName))) return true
         if (cleanPhone.length >= 6 && deletedKeys.contains(cleanPhone)) return true
+        for (k in deletedKeys) {
+            if (k.length >= 2 && (cleanName.contains(k) || (normName.isNotEmpty() && normName.contains(k)))) {
+                return true
+            }
+        }
         return false
+    }
+
+    fun isSameAccount(e1: String?, e2: String?): Boolean {
+        if (e1 == null || e2 == null) return false
+        val clean1 = e1.trim().lowercase()
+        val clean2 = e2.trim().lowercase()
+        if (clean1 == clean2) return true
+        val base1 = clean1.substringBefore('#')
+        val base2 = clean2.substringBefore('#')
+        if (base1.isNotEmpty() && base1 == base2) return true
+        val san1 = com.example.api.CloudSyncEngine.getSanitizedKey(clean1)
+        val san2 = com.example.api.CloudSyncEngine.getSanitizedKey(clean2)
+        return san1 == san2 || clean1 == san2 || clean2 == san1
     }
 
     private fun getDeletedCustomerKeys(email: String): Set<String> {
@@ -758,10 +781,6 @@ class AppViewModel(val repository: AppRepository, private val application: andro
                         .putString("session_user_email", user.email)
                         .putLong("session_last_active", System.currentTimeMillis())
                         .apply()
-                    val cleanP = cleanPhoneNumber(user.phone)
-                    if (user.email.lowercase().trim() == "01776374233.bd@gmail.com" || cleanP.contains("01776374233") || cleanP.contains("01309908369")) {
-                        prefs.edit().remove("deleted_cust_${getBaseEmail(user.email)}").apply()
-                    }
                     loadShopsForActiveUser()
                     updateActiveUserDynamicIpAndDevice()
                     normalizeCustomerAndDealerOrderIndices(user.email)
@@ -1010,6 +1029,49 @@ class AppViewModel(val repository: AppRepository, private val application: andro
 
             try {
                 syncMutex.withLock {
+                    if (uploadOnly) {
+                        val localUser = repository.getUser(user.email) ?: user
+                        val localStock = repository.getStockItemsList(user.email)
+                        val rawLocalCustomers = repository.getCustomersList(user.email)
+                        val rawLocalDealers = repository.getDealersList(user.email)
+                        val rawLocalTx = repository.getTransactionsList(user.email)
+
+                        val deletedCustKeys = getDeletedCustomerKeys(user.email)
+                        val deletedDlrKeys = getDeletedDealerKeys(user.email)
+
+                        val cleanCustomers = rawLocalCustomers.filter { !isCustomerDeleted(user.email, it.name, it.phone) }
+                        val cleanDealers = rawLocalDealers.filter { !isDealerDeleted(user.email, it.name, it.phone) }
+                        val cleanTx = rawLocalTx.filter { !isCustomerDeleted(user.email, it.title) && !isDealerDeleted(user.email, it.title) }
+
+                        val rootEmail = getBaseEmail(user.email)
+                        val additionalShops = repository.getAllShopsOfUser(rootEmail).filter { it.email != user.email }
+
+                        val syncMs = System.currentTimeMillis()
+                        val uploadPayload = com.example.api.SyncPayload(
+                            user = localUser,
+                            stockItems = localStock,
+                            customers = cleanCustomers,
+                            dealers = cleanDealers,
+                            transactions = cleanTx,
+                            timestamp = syncMs,
+                            registrationTimestamp = localUser.registrationTimestamp ?: syncMs,
+                            additionalShops = additionalShops,
+                            deletedCustomerKeys = deletedCustKeys.toList(),
+                            deletedDealerKeys = deletedDlrKeys.toList()
+                        )
+                        val uploadSuccess = com.example.api.CloudSyncEngine.uploadPayload(user.email, uploadPayload)
+                        withContext(Dispatchers.Main) {
+                            _isCloudSyncing.value = false
+                            if (uploadSuccess) {
+                                hasPendingLocalMutation.set(false)
+                                _lastSyncTime.value = syncMs
+                                prefs.edit().putLong("last_successful_sync_time2", syncMs).apply()
+                                lastLocalDbMutationTime = syncMs
+                            }
+                        }
+                        return@withLock
+                    }
+
                     var remotePayload: com.example.api.SyncPayload? = null
                     var activeUser = user
 
@@ -1181,43 +1243,27 @@ class AppViewModel(val repository: AppRepository, private val application: andro
                             addDeletedDealerKey(user.email, *remotePayload.deletedDealerKeys.toTypedArray())
                         }
 
-                        // Prune ONLY explicitly deleted customers that are NOT in the remote active payload
+                        // Prune any explicitly deleted customers from local database
                         val currentLocalCusts = repository.getCustomersList(user.email)
                         for (loc in currentLocalCusts) {
-                            val isInRemoteActive = remotePayload.customers.any { 
-                                com.example.data.MasterCustomerRegistry.isSameCustomer(it.name, it.phone, loc.name, loc.phone) 
-                            }
-                            if (!isInRemoteActive) {
-                                val isExplicitlyDeleted = isCustomerDeleted(user.email, loc.name, loc.phone)
-                                if (isExplicitlyDeleted) {
-                                    val txs = repository.getTransactionsList(user.email).filter { 
-                                        it.customerId == loc.id || com.example.data.MasterCustomerRegistry.isSameCustomer(loc.name, loc.phone, it.title, "")
-                                    }
-                                    txs.forEach { repository.deleteTransaction(it) }
-                                    repository.deleteCustomer(loc)
+                            if (isCustomerDeleted(user.email, loc.name, loc.phone)) {
+                                val txs = repository.getTransactionsList(user.email).filter { 
+                                    it.customerId == loc.id || com.example.data.MasterCustomerRegistry.isSameCustomer(loc.name, loc.phone, it.title, "")
                                 }
-                            } else {
-                                removeDeletedCustomerKey(user.email, loc.name, loc.phone)
+                                txs.forEach { repository.deleteTransaction(it) }
+                                repository.deleteCustomer(loc)
                             }
                         }
 
-                        // Prune ONLY explicitly deleted dealers that are NOT in the remote active payload
+                        // Prune any explicitly deleted dealers from local database
                         val currentLocalDlrs = repository.getDealersList(user.email)
                         for (dlr in currentLocalDlrs) {
-                            val isInRemoteActive = remotePayload.dealers.any { 
-                                com.example.data.MasterCustomerRegistry.isSameDealer(it.name, it.phone, dlr.name, dlr.phone) 
-                            }
-                            if (!isInRemoteActive) {
-                                val isExplicitlyDeleted = isDealerDeleted(user.email, dlr.name, dlr.phone)
-                                if (isExplicitlyDeleted) {
-                                    val txs = repository.getTransactionsList(user.email).filter { 
-                                        it.dealerId == dlr.id || com.example.data.MasterCustomerRegistry.isSameDealer(dlr.name, dlr.phone, it.title, "")
-                                    }
-                                    txs.forEach { repository.deleteTransaction(it) }
-                                    repository.deleteDealer(dlr)
+                            if (isDealerDeleted(user.email, dlr.name, dlr.phone)) {
+                                val txs = repository.getTransactionsList(user.email).filter { 
+                                    it.dealerId == dlr.id || com.example.data.MasterCustomerRegistry.isSameDealer(dlr.name, dlr.phone, it.title, "")
                                 }
-                            } else {
-                                removeDeletedDealerKey(user.email, dlr.name, dlr.phone)
+                                txs.forEach { repository.deleteTransaction(it) }
+                                repository.deleteDealer(dlr)
                             }
                         }
 
@@ -1225,7 +1271,9 @@ class AppViewModel(val repository: AppRepository, private val application: andro
                         val remoteCustomerMap = mutableMapOf<Int, Int>() // remote ID -> local ID
                         val activeLocalCustomersFresh = repository.getCustomersList(user.email)
                         for ((remoteIdx, remoteCust) in remotePayload.customers.withIndex()) {
-                            removeDeletedCustomerKey(user.email, remoteCust.name, remoteCust.phone)
+                            if (isCustomerDeleted(user.email, remoteCust.name, remoteCust.phone)) {
+                                continue
+                            }
 
                             val targetOrderIndex = if (remoteCust.orderIndex > 0) remoteCust.orderIndex else (remoteIdx + 1)
 
@@ -1233,45 +1281,50 @@ class AppViewModel(val repository: AppRepository, private val application: andro
                                 val cleanL = cleanPhoneNumber(local.phone)
                                 val cleanR = cleanPhoneNumber(remoteCust.phone)
                                 val samePhone = cleanL.isNotBlank() && cleanR.isNotBlank() && cleanL == cleanR
-                                val sameName = com.example.data.MasterCustomerRegistry.isSameCustomer(local.name, local.phone, remoteCust.name, remoteCust.phone)
-                                val sameIdAndName = local.id == remoteCust.id && (local.name.trim().equals(remoteCust.name.trim(), ignoreCase = true) || samePhone)
-                                samePhone || sameName || sameIdAndName
+                                val sameExactName = local.name.trim().equals(remoteCust.name.trim(), ignoreCase = true)
+                                val sameId = local.id == remoteCust.id && (cleanL.isBlank() || cleanR.isBlank())
+                                samePhone || sameExactName || sameId
                             }
                             if (matchingLocal != null) {
-                                val finalPhoto = if (isLocalImageMatchingRef(matchingLocal.photoUri, remoteCust.photoUri, "cust_${matchingLocal.phone.filter { it.isLetterOrDigit() }}", user.email)) {
-                                    matchingLocal.photoUri
-                                } else {
-                                    resolveBestPhoto(matchingLocal.photoUri, remoteCust.photoUri)
-                                }
-
-                                val finalAddress = remoteCust.address ?: matchingLocal.address
-                                // Local totalDue takes precedence if there are pending local mutations or local DB is at least as fresh as remote
                                 val isLocalNewer = hasPendingLocalMutation.get() || lastLocalDbMutationTime >= remotePayload.timestamp
-                                val finalDue = if (isLocalNewer) matchingLocal.totalDue else remoteCust.totalDue
+                                if (isLocalNewer) {
+                                    remoteCustomerMap[remoteCust.id] = matchingLocal.id
+                                } else {
+                                    val finalPhoto = if (isLocalImageMatchingRef(matchingLocal.photoUri, remoteCust.photoUri, "cust_${matchingLocal.phone.filter { it.isLetterOrDigit() }}", user.email)) {
+                                        matchingLocal.photoUri
+                                    } else {
+                                        resolveBestPhoto(matchingLocal.photoUri, remoteCust.photoUri)
+                                    }
 
-                                val hasDiff = matchingLocal.name != remoteCust.name ||
-                                        matchingLocal.phone != remoteCust.phone ||
-                                        matchingLocal.address != finalAddress ||
-                                        matchingLocal.photoUri != finalPhoto ||
-                                        matchingLocal.orderIndex != targetOrderIndex ||
-                                        java.lang.Math.abs(matchingLocal.totalDue - finalDue) > 0.001
+                                    val finalAddress = remoteCust.address ?: matchingLocal.address
+                                    val finalDue = remoteCust.totalDue
 
-                                val updated = matchingLocal.copy(
-                                    name = remoteCust.name,
-                                    phone = remoteCust.phone,
-                                    address = finalAddress,
-                                    totalDue = finalDue,
-                                    photoUri = finalPhoto,
-                                    orderIndex = targetOrderIndex
-                                )
-                                if (hasDiff) {
-                                    repository.updateCustomer(updated)
+                                    val hasDiff = matchingLocal.name != remoteCust.name ||
+                                            matchingLocal.phone != remoteCust.phone ||
+                                            matchingLocal.address != finalAddress ||
+                                            matchingLocal.photoUri != finalPhoto ||
+                                            matchingLocal.orderIndex != targetOrderIndex ||
+                                            java.lang.Math.abs(matchingLocal.totalDue - finalDue) > 0.001
+
+                                    val updated = matchingLocal.copy(
+                                        name = remoteCust.name,
+                                        phone = remoteCust.phone,
+                                        address = finalAddress,
+                                        totalDue = finalDue,
+                                        photoUri = finalPhoto,
+                                        orderIndex = targetOrderIndex
+                                    )
+                                    if (hasDiff) {
+                                        repository.updateCustomer(updated)
+                                    }
+                                    remoteCustomerMap[remoteCust.id] = updated.id
                                 }
-                                remoteCustomerMap[remoteCust.id] = updated.id
                             } else {
-                                val newCust = remoteCust.copy(id = 0, userEmail = user.email, orderIndex = targetOrderIndex)
-                                val newId = repository.insertCustomer(newCust)
-                                remoteCustomerMap[remoteCust.id] = newId.toInt()
+                                if (!isCustomerDeleted(user.email, remoteCust.name, remoteCust.phone)) {
+                                    val newCust = remoteCust.copy(id = 0, userEmail = user.email, orderIndex = targetOrderIndex)
+                                    val newId = repository.insertCustomer(newCust)
+                                    remoteCustomerMap[remoteCust.id] = newId.toInt()
+                                }
                             }
                         }
 
@@ -1279,7 +1332,9 @@ class AppViewModel(val repository: AppRepository, private val application: andro
                         val remoteDealerMap = mutableMapOf<Int, Int>() // remote ID -> local ID
                         val activeLocalDealersFresh = repository.getDealersList(user.email)
                         for ((remoteDlrIdx, remoteDlr) in remotePayload.dealers.withIndex()) {
-                            removeDeletedDealerKey(user.email, remoteDlr.name, remoteDlr.phone)
+                            if (isDealerDeleted(user.email, remoteDlr.name, remoteDlr.phone)) {
+                                continue
+                            }
 
                             val targetDlrOrder = if (remoteDlr.orderIndex > 0) remoteDlr.orderIndex else (remoteDlrIdx + 1)
 
@@ -1287,53 +1342,62 @@ class AppViewModel(val repository: AppRepository, private val application: andro
                                 val cleanL = cleanPhoneNumber(local.phone)
                                 val cleanR = cleanPhoneNumber(remoteDlr.phone)
                                 val samePhone = cleanL.isNotBlank() && cleanR.isNotBlank() && cleanL == cleanR
-                                val sameName = com.example.data.MasterCustomerRegistry.isSameDealer(local.name, local.phone, remoteDlr.name, remoteDlr.phone)
-                                val sameIdAndName = local.id == remoteDlr.id && (local.name.trim().equals(remoteDlr.name.trim(), ignoreCase = true) || samePhone)
-                                samePhone || sameName || sameIdAndName
+                                val sameExactName = local.name.trim().equals(remoteDlr.name.trim(), ignoreCase = true)
+                                val sameId = local.id == remoteDlr.id && (cleanL.isBlank() || cleanR.isBlank())
+                                samePhone || sameExactName || sameId
                             }
                             if (matchingLocal != null) {
-                                val finalDlrPhoto = if (isLocalImageMatchingRef(matchingLocal.photoUri, remoteDlr.photoUri, "dlr_${matchingLocal.phone.filter { it.isLetterOrDigit() }}", user.email)) {
-                                    matchingLocal.photoUri
-                                } else {
-                                    resolveBestPhoto(matchingLocal.photoUri, remoteDlr.photoUri)
-                                }
-
-                                val finalCompany = remoteDlr.company ?: matchingLocal.company
-                                val finalDetails = remoteDlr.initialDetails ?: matchingLocal.initialDetails
                                 val isLocalNewer = hasPendingLocalMutation.get() || lastLocalDbMutationTime >= remotePayload.timestamp
-                                val finalOwed = if (isLocalNewer) matchingLocal.totalOwed else remoteDlr.totalOwed
+                                if (isLocalNewer) {
+                                    remoteDealerMap[remoteDlr.id] = matchingLocal.id
+                                } else {
+                                    val finalDlrPhoto = if (isLocalImageMatchingRef(matchingLocal.photoUri, remoteDlr.photoUri, "dlr_${matchingLocal.phone.filter { it.isLetterOrDigit() }}", user.email)) {
+                                        matchingLocal.photoUri
+                                    } else {
+                                        resolveBestPhoto(matchingLocal.photoUri, remoteDlr.photoUri)
+                                    }
 
-                                val hasDiff = matchingLocal.name != remoteDlr.name ||
-                                        matchingLocal.phone != remoteDlr.phone ||
-                                        matchingLocal.company != finalCompany ||
-                                        matchingLocal.photoUri != finalDlrPhoto ||
-                                        matchingLocal.initialDetails != finalDetails ||
-                                        matchingLocal.orderIndex != targetDlrOrder ||
-                                        java.lang.Math.abs(matchingLocal.totalOwed - finalOwed) > 0.001
+                                    val finalCompany = remoteDlr.company ?: matchingLocal.company
+                                    val finalDetails = remoteDlr.initialDetails ?: matchingLocal.initialDetails
+                                    val finalOwed = remoteDlr.totalOwed
 
-                                val updated = matchingLocal.copy(
-                                    name = remoteDlr.name,
-                                    phone = remoteDlr.phone,
-                                    company = finalCompany,
-                                    totalOwed = finalOwed,
-                                    photoUri = finalDlrPhoto,
-                                    initialDetails = finalDetails,
-                                    orderIndex = targetDlrOrder
-                                )
-                                if (hasDiff) {
-                                    repository.updateDealer(updated)
+                                    val hasDiff = matchingLocal.name != remoteDlr.name ||
+                                            matchingLocal.phone != remoteDlr.phone ||
+                                            matchingLocal.company != finalCompany ||
+                                            matchingLocal.photoUri != finalDlrPhoto ||
+                                            matchingLocal.initialDetails != finalDetails ||
+                                            matchingLocal.orderIndex != targetDlrOrder ||
+                                            java.lang.Math.abs(matchingLocal.totalOwed - finalOwed) > 0.001
+
+                                    val updated = matchingLocal.copy(
+                                        name = remoteDlr.name,
+                                        phone = remoteDlr.phone,
+                                        company = finalCompany,
+                                        totalOwed = finalOwed,
+                                        photoUri = finalDlrPhoto,
+                                        initialDetails = finalDetails,
+                                        orderIndex = targetDlrOrder
+                                    )
+                                    if (hasDiff) {
+                                        repository.updateDealer(updated)
+                                    }
+                                    remoteDealerMap[remoteDlr.id] = updated.id
                                 }
-                                remoteDealerMap[remoteDlr.id] = updated.id
                             } else {
-                                val newDlr = remoteDlr.copy(id = 0, userEmail = user.email, orderIndex = targetDlrOrder)
-                                val newId = repository.insertDealer(newDlr)
-                                remoteDealerMap[remoteDlr.id] = newId.toInt()
+                                if (!isDealerDeleted(user.email, remoteDlr.name, remoteDlr.phone)) {
+                                    val newDlr = remoteDlr.copy(id = 0, userEmail = user.email, orderIndex = targetDlrOrder)
+                                    val newId = repository.insertDealer(newDlr)
+                                    remoteDealerMap[remoteDlr.id] = newId.toInt()
+                                }
                             }
                         }
 
                         // --- MERGING TRANSACTIONS ---
                         val activeLocalTx = repository.getTransactionsList(user.email)
                         for (remoteT in remotePayload.transactions) {
+                            if (isCustomerDeleted(user.email, remoteT.title) || isDealerDeleted(user.email, remoteT.title)) {
+                                continue
+                            }
                             val existsLocally = activeLocalTx.any {
                                 it.title.trim() == remoteT.title.trim() &&
                                 java.lang.Math.abs(it.amount - remoteT.amount) < 0.01 &&
@@ -1481,7 +1545,10 @@ class AppViewModel(val repository: AppRepository, private val application: andro
                             }
                         }
                     }
-                    val finalCustomersToUpload = safeMergedCustomers.distinctBy { it.id }.sortedWith(compareBy({ it.orderIndex }, { it.id }))
+                    val finalCustomersToUpload = safeMergedCustomers
+                        .filter { !isCustomerDeleted(user.email, it.name, it.phone) }
+                        .distinctBy { it.id }
+                        .sortedWith(compareBy({ it.orderIndex }, { it.id }))
 
                     val safeMergedDealers = processedDealers.toMutableList()
                     if (remotePayload != null) {
@@ -1496,18 +1563,27 @@ class AppViewModel(val repository: AppRepository, private val application: andro
                             }
                         }
                     }
-                    val finalDealersToUpload = safeMergedDealers.distinctBy { it.id }.sortedWith(compareBy({ it.orderIndex }, { it.id }))
+                    val finalDealersToUpload = safeMergedDealers
+                        .filter { !isDealerDeleted(user.email, it.name, it.phone) }
+                        .distinctBy { it.id }
+                        .sortedWith(compareBy({ it.orderIndex }, { it.id }))
 
                     val finalTxMap = finalTx.associateBy { "${it.title.trim()}_${it.type}_${it.amount}_${it.timestamp}" }.toMutableMap()
                     if (remotePayload != null) {
                         for (rt in remotePayload.transactions) {
+                            if (isCustomerDeleted(user.email, rt.title) || isDealerDeleted(user.email, rt.title)) {
+                                continue
+                            }
                             val key = "${rt.title.trim()}_${rt.type}_${rt.amount}_${rt.timestamp}"
                             if (!finalTxMap.containsKey(key)) {
                                 finalTxMap[key] = rt
                             }
                         }
                     }
-                    val finalTxToUpload = finalTxMap.values.toList().sortedBy { it.timestamp }
+                    val finalTxToUpload = finalTxMap.values
+                        .filter { !isCustomerDeleted(user.email, it.title) && !isDealerDeleted(user.email, it.title) }
+                        .toList()
+                        .sortedBy { it.timestamp }
 
                     val syncMs = System.currentTimeMillis()
                     val uploadPayload = com.example.api.SyncPayload(
@@ -1603,6 +1679,7 @@ class AppViewModel(val repository: AppRepository, private val application: andro
     private suspend fun autoRecoverOrphanTransactions(user: User) {
         try {
             var allCustomers = repository.getCustomersList(user.email)
+            if (allCustomers.isNotEmpty()) return
             val allTx = repository.getTransactionsList(user.email)
             
             val existingCustomerIds = allCustomers.map { it.id }.toSet()
@@ -1760,14 +1837,10 @@ class AppViewModel(val repository: AppRepository, private val application: andro
         val allLocalUsers = repository.getAllUsers()
         
         // Filter out the excludingEmail and any other shops belonging to the same root email
-        val baseExcluding = excludingEmail?.substringBefore('#')?.trim()?.lowercase()
         val combinedUsers = (allCloudUsers + allLocalUsers)
             .distinctBy { it.email.trim().lowercase() }
             .filter { u ->
-                excludingEmail == null || (
-                    u.email.trim().lowercase() != excludingEmail.trim().lowercase() &&
-                    (baseExcluding == null || u.email.substringBefore('#').trim().lowercase() != baseExcluding)
-                )
+                excludingEmail == null || !isSameAccount(u.email, excludingEmail)
             }
 
         val takenEmails = mutableSetOf<String>()
@@ -2005,18 +2078,20 @@ class AppViewModel(val repository: AppRepository, private val application: andro
         val oldUser = _currentUser.value
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                // Perform robust, unified validation checking both local and cloud databases
-                val collisionError = getCollisionErrorForUser(
-                    excludingEmail = oldUser?.email,
-                    ownerName = ownerName.trim(),
-                    phone = phone.trim(),
-                    email = targetEmail
-                )
-                if (collisionError != null) {
-                    withContext(Dispatchers.Main) {
-                        showToast(collisionError)
+                val isChangingEmail = oldUser != null && !isSameAccount(oldUser.email, targetEmail)
+                if (isChangingEmail) {
+                    val collisionError = getCollisionErrorForUser(
+                        excludingEmail = oldUser?.email,
+                        ownerName = ownerName.trim(),
+                        phone = phone.trim(),
+                        email = targetEmail
+                    )
+                    if (collisionError != null) {
+                        withContext(Dispatchers.Main) {
+                            showToast(collisionError)
+                        }
+                        return@launch
                     }
-                    return@launch
                 }
 
                 val finalProfileRef = uploadImageIfBase64(targetEmail, profilePic, "profile")
@@ -2038,6 +2113,7 @@ class AppViewModel(val repository: AppRepository, private val application: andro
                     isBlocked = oldUser?.isBlocked ?: false
                 )
 
+                // 1. Immediately apply to local database and in-memory StateFlow
                 if (oldUser != null && oldUser.email.trim().lowercase() != targetEmail.lowercase()) {
                     // Register new user record
                     repository.registerUser(updatedUser)
@@ -2051,6 +2127,13 @@ class AppViewModel(val repository: AppRepository, private val application: andro
                 } else {
                     repository.updateUser(updatedUser)
                 }
+
+                withContext(Dispatchers.Main) {
+                    _currentUser.value = updatedUser
+                }
+                lastProfileUpdateTime = System.currentTimeMillis() + 60000L
+                lastLocalDbMutationTime = System.currentTimeMillis()
+                hasPendingLocalMutation.set(true)
 
                 // Propagate updated owner credentials to all other shops of same root user
                 val rootEmail = getBaseEmail(targetEmail)
@@ -2067,53 +2150,59 @@ class AppViewModel(val repository: AppRepository, private val application: andro
                     }
                 }
 
-                // Sync and upload Payload to Cloud
-                val finalStock = repository.getStockItems(targetEmail).firstOrNull() ?: emptyList()
-                val finalCustomers = repository.getCustomers(targetEmail).firstOrNull() ?: emptyList()
-                val finalDealers = repository.getDealers(targetEmail).firstOrNull() ?: emptyList()
-                val finalTx = repository.getTransactions(targetEmail).firstOrNull() ?: emptyList()
+                // Sync and upload Payload to Cloud safely using mutex
+                var uploadSuccess = false
+                syncMutex.withLock {
+                    val finalStock = repository.getStockItems(targetEmail).firstOrNull() ?: emptyList()
+                    val finalCustomers = repository.getCustomers(targetEmail).firstOrNull() ?: emptyList()
+                    val finalDealers = repository.getDealers(targetEmail).firstOrNull() ?: emptyList()
+                    val finalTx = repository.getTransactions(targetEmail).firstOrNull() ?: emptyList()
 
-                // Re-fetch since we updated additional shops locally
-                val updatedShopsList = repository.getAllShopsOfUser(rootEmail)
-                val additionalShops = updatedShopsList.filter { it.email != targetEmail }
+                    val updatedShopsList = repository.getAllShopsOfUser(rootEmail)
+                    val additionalShops = updatedShopsList.filter { it.email != targetEmail }
 
-                val existingPayload = com.example.api.CloudSyncEngine.downloadPayload(targetEmail)
-                val newPayload = com.example.api.SyncPayload(
-                    user = updatedUser,
-                    stockItems = finalStock,
-                    customers = finalCustomers,
-                    dealers = finalDealers,
-                    transactions = finalTx,
-                    timestamp = System.currentTimeMillis(),
-                    registrationTimestamp = existingPayload?.registrationTimestamp ?: existingPayload?.timestamp ?: System.currentTimeMillis(),
-                    additionalShops = additionalShops
-                )
-                
-                val uploadSuccess = com.example.api.CloudSyncEngine.uploadPayload(targetEmail, newPayload)
-                
-                // Cleanup old redirects if emails/phones changed
-                cleanupOldRedirects(oldUser, updatedUser)
+                    val existingPayload = com.example.api.CloudSyncEngine.downloadPayload(targetEmail)
+                    val newPayload = com.example.api.SyncPayload(
+                        user = updatedUser,
+                        stockItems = finalStock,
+                        customers = finalCustomers,
+                        dealers = finalDealers,
+                        transactions = finalTx,
+                        timestamp = System.currentTimeMillis(),
+                        registrationTimestamp = existingPayload?.registrationTimestamp ?: existingPayload?.timestamp ?: System.currentTimeMillis(),
+                        additionalShops = additionalShops,
+                        deletedCustomerKeys = getDeletedCustomerKeys(targetEmail).toList(),
+                        deletedDealerKeys = getDeletedDealerKeys(targetEmail).toList()
+                    )
+                    
+                    uploadSuccess = com.example.api.CloudSyncEngine.uploadPayload(targetEmail, newPayload)
+                    
+                    // Cleanup old redirects if emails/phones changed
+                    cleanupOldRedirects(oldUser, updatedUser)
 
-                if (oldUser != null && oldUser.email.trim().lowercase() != targetEmail.lowercase()) {
+                    if (oldUser != null && oldUser.email.trim().lowercase() != targetEmail.lowercase()) {
+                        if (uploadSuccess) {
+                            com.example.api.CloudSyncEngine.deletePayload(oldUser.email.trim())
+                        }
+                    }
                     if (uploadSuccess) {
-                        com.example.api.CloudSyncEngine.deletePayload(oldUser.email.trim())
+                        lastProfileUpdateTime = System.currentTimeMillis()
+                        lastLocalDbMutationTime = System.currentTimeMillis()
+                        hasPendingLocalMutation.set(false)
                     }
                 }
-
-                _currentUser.value = updatedUser
-                lastProfileUpdateTime = System.currentTimeMillis() + 5000L
 
                 withContext(Dispatchers.Main) {
                     if (uploadSuccess) {
                         showToast(if (_isBengali.value) "প্রোফাইল সফলভাবে আপডেট ও সিন্ক্রোনাইজ করা হয়েছে!" else "Profile updated and synchronized successfully!")
                     } else {
-                        showToast(if (_isBengali.value) "স্থানীয়ভাবে সেভ হয়েছে কিন্তু ক্লাউড আপডেট ব্যর্থ হয়েছে" else "Saved locally but cloud update failed")
+                        showToast(if (_isBengali.value) "প্রোফাইল সফলভাবে আপডেট করা হয়েছে!" else "Profile updated successfully!")
                     }
                 }
             } catch (e: Exception) {
                 Log.e("AppViewModel", "Profile update error", e)
                 withContext(Dispatchers.Main) {
-                    showToast(if (_isBengali.value) "স্থানীয়ভাবে সেভ হয়েছে কিন্তু ক্লাউড আপডেট ব্যর্থ হয়েছে" else "Saved locally but cloud update failed")
+                    showToast(if (_isBengali.value) "প্রোফাইল সফলভাবে সংরক্ষিত হয়েছে" else "Profile saved successfully")
                 }
             }
         }
@@ -3112,7 +3201,7 @@ class AppViewModel(val repository: AppRepository, private val application: andro
         for (i in 0..9) {
             clean = clean.replace(banglaDigits[i], englishDigits[i])
         }
-        clean = clean.replace(",", "").replace(" ", "")
+        clean = clean.replace("৳", "").replace("টাকা", "").replace("Tk", "").replace("tk", "").replace(",", "").replace(" ", "").trim()
         return clean.toDoubleOrNull() ?: 0.0
     }
 
@@ -3123,7 +3212,7 @@ class AppViewModel(val repository: AppRepository, private val application: andro
         for (i in 0..9) {
             clean = clean.replace(banglaDigits[i], englishDigits[i])
         }
-        clean = clean.replace(",", "").replace(" ", "")
+        clean = clean.replace("৳", "").replace("টাকা", "").replace("Tk", "").replace("tk", "").replace(",", "").replace(" ", "").trim()
         return clean.toIntOrNull() ?: 0
     }
 
@@ -3309,15 +3398,15 @@ class AppViewModel(val repository: AppRepository, private val application: andro
 
         markLocalMutation()
         viewModelScope.launch(Dispatchers.IO) {
-            val freshCustomer = repository.getCustomersList(email).find { it.id == customer.id }
-                ?: repository.getCustomersList(email).find { 
-                    com.example.data.MasterCustomerRegistry.isSameCustomer(it.name, it.phone, customer.name, customer.phone)
-                }
+            val freshCustomer = repository.getCustomerById(customer.id)
+                ?: repository.getCustomersList(email).find { it.id == customer.id }
+                ?: repository.getCustomersList(email).find { it.name.trim().equals(customer.name.trim(), ignoreCase = true) }
                 ?: customer
             val newDue = roundToTwoDecimals(freshCustomer.totalDue - amountPaid)
             val updated = freshCustomer.copy(totalDue = newDue)
             repository.updateCustomer(updated)
             lastLocalDbMutationTime = System.currentTimeMillis()
+            hasPendingLocalMutation.set(true)
 
             val customNote = note?.trim()
             val desc = if (!customNote.isNullOrBlank()) {
@@ -3332,7 +3421,7 @@ class AppViewModel(val repository: AppRepository, private val application: andro
                 type = "CUSTOMER_PAYMENT",
                 amount = amountPaid,
                 profit = 0.0,
-                title = if (_isBengali.value) "${freshCustomer.name} বাকি জমা দিয়েছে" else "Received payment from ${freshCustomer.name}",
+                title = if (_isBengali.value) "${freshCustomer.name.trim()} বাকি জমা দিয়েছে" else "Received payment from ${freshCustomer.name.trim()}",
                 description = desc,
                 customerId = freshCustomer.id
             )
@@ -3350,15 +3439,15 @@ class AppViewModel(val repository: AppRepository, private val application: andro
 
         markLocalMutation()
         viewModelScope.launch(Dispatchers.IO) {
-            val freshCustomer = repository.getCustomersList(email).find { it.id == customer.id }
-                ?: repository.getCustomersList(email).find { 
-                    com.example.data.MasterCustomerRegistry.isSameCustomer(it.name, it.phone, customer.name, customer.phone)
-                }
+            val freshCustomer = repository.getCustomerById(customer.id)
+                ?: repository.getCustomersList(email).find { it.id == customer.id }
+                ?: repository.getCustomersList(email).find { it.name.trim().equals(customer.name.trim(), ignoreCase = true) }
                 ?: customer
             val newDue = roundToTwoDecimals(freshCustomer.totalDue + dueAmount)
             val updated = freshCustomer.copy(totalDue = newDue)
             repository.updateCustomer(updated)
             lastLocalDbMutationTime = System.currentTimeMillis()
+            hasPendingLocalMutation.set(true)
 
             // Save transaction record
             val transaction = TransactionRecord(
@@ -3366,7 +3455,7 @@ class AppViewModel(val repository: AppRepository, private val application: andro
                 type = "CUSTOMER_DUE",
                 amount = dueAmount,
                 profit = 0.0,
-                title = if (_isBengali.value) "${freshCustomer.name}-এর বাকি হিসাব বাড়েছে" else "Due increased for ${freshCustomer.name}",
+                title = if (_isBengali.value) "${freshCustomer.name.trim()}-এর বাকি হিসাব বাড়েছে" else "Due increased for ${freshCustomer.name.trim()}",
                 description = reason.ifBlank { if (_isBengali.value) "নতুন বাকি যোগ" else "Added due balance" },
                 customerId = freshCustomer.id
             )
@@ -3383,25 +3472,28 @@ class AppViewModel(val repository: AppRepository, private val application: andro
         viewModelScope.launch(Dispatchers.IO) {
             val email = customer.userEmail
             val phoneClean = customer.phone.trim()
-            addDeletedCustomerKey(email, customer.name, phoneClean)
+            val custName = customer.name.trim()
+            addDeletedCustomerKey(email, custName, phoneClean, "id_${customer.id}")
 
             // 1. Delete all transactions linked to this customer (including SALE, CUSTOMER_DUE, CUSTOMER_PAYMENT)
             val allTx = repository.getTransactionsList(email)
             val txToDelete = allTx.filter { tx ->
-                tx.customerId == customer.id || com.example.data.MasterCustomerRegistry.isSameCustomer(customer.name, customer.phone, tx.title, "")
+                tx.customerId == customer.id ||
+                tx.title.contains(custName) ||
+                (phoneClean.isNotBlank() && tx.description?.contains(phoneClean) == true)
             }
             for (tx in txToDelete) {
                 repository.deleteTransaction(tx)
             }
 
             // 2. Delete customer from local DB
-            val freshCustomer = repository.getCustomersList(email).find { it.id == customer.id }
-                ?: repository.getCustomersList(email).find { 
-                    com.example.data.MasterCustomerRegistry.isSameCustomer(it.name, it.phone, customer.name, customer.phone)
-                }
+            val freshCustomer = repository.getCustomerById(customer.id)
+                ?: repository.getCustomersList(email).find { it.id == customer.id }
+                ?: repository.getCustomersList(email).find { it.name.trim().equals(custName, ignoreCase = true) }
                 ?: customer
             repository.deleteCustomer(freshCustomer)
             lastLocalDbMutationTime = System.currentTimeMillis()
+            hasPendingLocalMutation.set(true)
 
             // 3. Re-sequence remaining customers to contiguous 1..N order
             val remaining = repository.getCustomersList(email).sortedWith(compareBy({ it.orderIndex }, { it.id }))
@@ -3437,8 +3529,9 @@ class AppViewModel(val repository: AppRepository, private val application: andro
         viewModelScope.launch(Dispatchers.IO) {
             val email = _currentUser.value?.email ?: return@launch
             val existing = repository.getCustomersList(email)
-            val fresh = existing.find { it.id == customer.id }
-                ?: existing.find { com.example.data.MasterCustomerRegistry.isSameCustomer(it.name, it.phone, customer.name, customer.phone) }
+            val fresh = repository.getCustomerById(customer.id)
+                ?: existing.find { it.id == customer.id }
+                ?: existing.find { it.name.trim().equals(customer.name.trim(), ignoreCase = true) }
                 ?: customer
 
             val phoneClean = phone.trim()
@@ -3669,15 +3762,15 @@ class AppViewModel(val repository: AppRepository, private val application: andro
 
         markLocalMutation()
         viewModelScope.launch(Dispatchers.IO) {
-            val freshDealer = repository.getDealersList(email).find { it.id == dealer.id }
-                ?: repository.getDealersList(email).find { 
-                    com.example.data.MasterCustomerRegistry.isSameDealer(it.name, it.phone, dealer.name, dealer.phone)
-                }
+            val freshDealer = repository.getDealerById(dealer.id)
+                ?: repository.getDealersList(email).find { it.id == dealer.id }
+                ?: repository.getDealersList(email).find { it.name.trim().equals(dealer.name.trim(), ignoreCase = true) }
                 ?: dealer
             val newOwed = roundToTwoDecimals(freshDealer.totalOwed - amount)
             val updated = freshDealer.copy(totalOwed = newOwed)
             repository.updateDealer(updated)
             lastLocalDbMutationTime = System.currentTimeMillis()
+            hasPendingLocalMutation.set(true)
 
             val customNote = note?.trim()
             val desc = if (!customNote.isNullOrBlank()) {
@@ -3691,7 +3784,7 @@ class AppViewModel(val repository: AppRepository, private val application: andro
                 type = "DEALER_PAYMENT",
                 amount = amount,
                 profit = 0.0,
-                title = if (_isBengali.value) "${freshDealer.name}-কে পরিশোধ করা হয়েছে" else "Paid supplier ${freshDealer.name}",
+                title = if (_isBengali.value) "${freshDealer.name.trim()}-কে পরিশোধ করা হয়েছে" else "Paid supplier ${freshDealer.name.trim()}",
                 description = desc,
                 dealerId = freshDealer.id
             )
@@ -3709,22 +3802,22 @@ class AppViewModel(val repository: AppRepository, private val application: andro
 
         markLocalMutation()
         viewModelScope.launch(Dispatchers.IO) {
-            val freshDealer = repository.getDealersList(email).find { it.id == dealer.id }
-                ?: repository.getDealersList(email).find { 
-                    com.example.data.MasterCustomerRegistry.isSameDealer(it.name, it.phone, dealer.name, dealer.phone)
-                }
+            val freshDealer = repository.getDealerById(dealer.id)
+                ?: repository.getDealersList(email).find { it.id == dealer.id }
+                ?: repository.getDealersList(email).find { it.name.trim().equals(dealer.name.trim(), ignoreCase = true) }
                 ?: dealer
             val newOwed = roundToTwoDecimals(freshDealer.totalOwed + amount)
             val updated = freshDealer.copy(totalOwed = newOwed)
             repository.updateDealer(updated)
             lastLocalDbMutationTime = System.currentTimeMillis()
+            hasPendingLocalMutation.set(true)
 
             val transaction = TransactionRecord(
                 userEmail = email,
                 type = "EXPENSE",
                 amount = amount,
                 profit = -amount,
-                title = if (_isBengali.value) "${freshDealer.name} থেকে পণ্য ক্রয়" else "Purchased from supplier ${freshDealer.name}",
+                title = if (_isBengali.value) "${freshDealer.name.trim()} থেকে পণ্য ক্রয়" else "Purchased from supplier ${freshDealer.name.trim()}",
                 description = notes.ifBlank { if (_isBengali.value) "মালামাল ক্রয় বাবদ খরচ" else "Purchase of goods on credit/due" },
                 dealerId = freshDealer.id
             )
@@ -3741,25 +3834,28 @@ class AppViewModel(val repository: AppRepository, private val application: andro
         viewModelScope.launch(Dispatchers.IO) {
             val email = dealer.userEmail
             val phoneClean = dealer.phone.trim()
-            addDeletedDealerKey(email, dealer.name, phoneClean)
+            val dlrName = dealer.name.trim()
+            addDeletedDealerKey(email, dlrName, phoneClean, "dlr_${dealer.id}")
 
             // 1. Delete all transactions linked to this dealer
             val allTx = repository.getTransactionsList(email)
             val txToDelete = allTx.filter { tx ->
-                tx.dealerId == dealer.id || com.example.data.MasterCustomerRegistry.isSameDealer(dealer.name, dealer.phone, tx.title, "")
+                tx.dealerId == dealer.id ||
+                tx.title.contains(dlrName) ||
+                (phoneClean.isNotBlank() && tx.description?.contains(phoneClean) == true)
             }
             for (tx in txToDelete) {
                 repository.deleteTransaction(tx)
             }
 
             // 2. Delete dealer from local DB
-            val freshDealer = repository.getDealersList(email).find { it.id == dealer.id }
-                ?: repository.getDealersList(email).find { 
-                    com.example.data.MasterCustomerRegistry.isSameDealer(it.name, it.phone, dealer.name, dealer.phone)
-                }
+            val freshDealer = repository.getDealerById(dealer.id)
+                ?: repository.getDealersList(email).find { it.id == dealer.id }
+                ?: repository.getDealersList(email).find { it.name.trim().equals(dlrName, ignoreCase = true) }
                 ?: dealer
             repository.deleteDealer(freshDealer)
             lastLocalDbMutationTime = System.currentTimeMillis()
+            hasPendingLocalMutation.set(true)
 
             // 3. Re-sequence remaining dealers to contiguous 1..N order
             val remaining = repository.getDealersList(email).sortedWith(compareBy({ it.orderIndex }, { it.id }))
